@@ -2,11 +2,12 @@ from django.shortcuts import redirect, render
 from django.views.generic import ListView, CreateView, UpdateView, DeleteView
 from django.urls import reverse_lazy
 from .models import Domicilio, Beneficiario, Derivacion, Prestador, Prestacion, ActividadExtension, \
-    EncuestaAtencionBeneficiario
+    EncuestaAtencionBeneficiario, Notificacion, NotificacionEstado
 from django.template import loader
 from django.http import HttpResponse, HttpResponseRedirect
 from .forms import DomicilioForm, BeneficiarioForm, DerivacionForm, PrestadorForm, PrestacionForm, \
-    ActividadExtensionForm, EncuestaAtencionBeneficiarioForm
+    ActividadExtensionForm, EncuestaAtencionBeneficiarioForm, NotificacionForm, NotificacionEstadoForm, \
+    NotificacionEstadoUpdateForm
 from django.contrib.auth import login, authenticate
 from django.contrib.auth.forms import UserCreationForm
 from easy_pdf.views import PDFTemplateView
@@ -33,8 +34,7 @@ def signup(request):
             user = authenticate(username=username, password=raw_password)
             login(request, user)
             return redirect('home')
-    else:
-        form = UserCreationForm()
+    else: form = UserCreationForm()
     return render(request, 'registration/signup.html', {'form': form})
 
 
@@ -137,6 +137,128 @@ def deleteBeneficiario(request, beneficiario_id):
     return redirect('beneficiario_changelist')
 
 
+### Notificaciones
+class NotificacionesListView(ListView):
+    model = NotificacionEstado
+    context_object_name = 'notificacion'
+    template_name = 'sosjujuy/notificacion_list.html'
+
+
+
+class ReporteNotificacion(ListView):
+    model = NotificacionEstado
+    context_object_name = 'notificacion'
+    template_name = 'sosjujuy/notificacion_reporte.html'
+
+    def get_context_data(self, **kwargs):
+        context = super(ReporteNotificacion, self).get_context_data(**kwargs)
+        iniciado = self.model.objects.filter(estado="Iniciado").count()
+        enviado = self.model.objects.filter(estado="Enviado").count()
+        pendiente = self.model.objects.filter(estado="Pendiente").count()
+        anulado = self.model.objects.filter(estado="Anulado").count()
+        aprobado = self.model.objects.filter(estado="Aprobado").count()
+        rechazado = self.model.objects.filter(estado="Rechazado").count()
+        
+        context['datos'] = [iniciado,enviado,pendiente,anulado,aprobado,rechazado]
+        
+        return context
+
+
+def enviaremailNotificacion(notificacion):
+    send_mail(
+        'Notificacion SOSJujuy',
+        mail_body_notificacion(notificacion),
+        'sos.jujuy.2020@gmail.com',
+        ["sos.jujuy.2020@gmail.com"], #[derivacion.beneficiario.email],
+        fail_silently=False,
+    )
+
+class NotificacionCreateView(CreateView):
+    model = Notificacion
+    second_model = NotificacionEstado
+    template_name = 'sosjujuy/notificacion_form.html'
+    form_class = NotificacionForm
+    second_form_class = NotificacionEstadoForm
+    success_url = reverse_lazy('notificacion_changelist')
+
+    def get_context_data(self, **kwargs):
+        context = super(NotificacionCreateView, self).get_context_data(**kwargs)
+        if 'form' not in context:
+            context['form'] = self.form_class(self.request.GET or None)
+        if 'form2' not in context:
+            context['form2'] = self.second_form_class(self.request.GET or None)
+        context['user'] = self.request.user
+        return context
+
+    def post(self, request, *args, **kwargs):
+        self.object = self.get_object
+        form = self.form_class(request.POST)
+        form2 = self.second_form_class(request.POST, request.FILES)
+        if form.is_valid() and form2.is_valid():
+            notificacion = form.save(commit=False)
+            notificacion.user = request.user
+            form.save()
+
+            notificacion_estado = form2.save(commit=False)
+            notificacion_estado.notificacion = notificacion
+            notificacion_estado.user = request.user
+            
+            if (request.POST.get('enviar', False)):
+                enviaremailNotificacion(notificacion)
+                notificacion_estado.estado = "Enviado"
+            else:
+                notificacion_estado.estado = "Iniciado"
+            form2.save()
+
+            return HttpResponseRedirect(self.get_success_url())
+        else:
+            return self.render_to_response(self.get_context_data(form=form, form2=form2))
+
+
+class NotificacionUpdateView(UpdateView):
+    model = Notificacion
+    second_model = NotificacionEstado
+    template_name = 'sosjujuy/notificacion_update.html'
+    form_class = NotificacionEstadoUpdateForm
+    second_form_class = NotificacionForm
+    success_url = reverse_lazy('notificacion_changelist')
+
+    def get_context_data(self, **kwargs):
+        context = super(NotificacionUpdateView, self).get_context_data(**kwargs)
+        pk = self.kwargs.get('pk', 0)
+        notificacion = self.model.objects.get(id=pk)
+        notificacion_estado = self.second_model.objects.filter(notificacion=notificacion.id).order_by("-id")
+        if 'form' not in context:
+            context['form'] = self.form_class()
+        if 'form2' not in context:
+            context['form2'] = self.second_form_class(instance=notificacion)
+        context['id'] = pk
+        context['datos'] = notificacion
+        enviado = self.second_model.objects.filter(
+            notificacion=notificacion.id,
+            estado="Enviado").count()
+        print()
+        context['enviado'] = False if enviado else True
+        context['observaciones'] = notificacion_estado
+        return context
+
+    def post(self, request, *args, **kwargs):
+        self.object = self.get_object
+        id_notificacion = kwargs['pk']
+        notificacion_instance = self.model.objects.get(id=id_notificacion)
+        form = self.form_class(request.POST, request.FILES)
+        if form.is_valid():
+            notificacion = form.save()
+            notificacion.notificacion = notificacion_instance
+            notificacion.user = request.user
+            form.save()
+            return HttpResponseRedirect(self.get_success_url())
+        else:
+            return self.render_to_response(self.get_context_data(form=form))
+
+
+### Fin Notificaiones
+
 class PrestadorListView(ListView):
     model = Prestador
     template_name = 'sosjujuy/prestador_list.html'
@@ -182,9 +304,9 @@ class PrestacionCreateView(CreateView):
         self.object = self.get_object
         form = self.form_class(request.POST)
         form2 = self.second_form_class(request.POST)
-        if form.is_valid() and form2.is_valid():
+        if form.is_valid() :
             prestacion = form.save(commit=False)
-            prestacion.domicilio = form2.save()
+            #prestacion.domicilio = form2.save()
             prestacion.save()
             return HttpResponseRedirect(self.get_success_url())
         else:
@@ -203,11 +325,11 @@ class PrestacionUpdateView(UpdateView):
         context = super(PrestacionUpdateView, self).get_context_data(**kwargs)
         pk = self.kwargs.get('pk', 0)
         prestacion = self.model.objects.get(id=pk)
-        domicilio = self.second_model.objects.get(id=prestacion.domicilio_id)
+        #domicilio = self.second_model.objects.get(id=prestacion.domicilio_id)
         if 'form' not in context:
             context['form'] = self.form_class()
-        if 'form2' not in context:
-            context['form2'] = self.second_form_class(instance=domicilio)
+        #if 'form2' not in context:
+        #    context['form2'] = self.second_form_class(instance=domicilio)
         context['id'] = pk
         return context
 
@@ -215,12 +337,12 @@ class PrestacionUpdateView(UpdateView):
         self.object = self.get_object
         id_prestacion = kwargs['pk']
         prestacion = self.model.objects.get(id=id_prestacion)
-        domicilio = self.second_model.objects.get(id=prestacion.domicilio_id)
+        #domicilio = self.second_model.objects.get(id=prestacion.domicilio_id)
         form = self.form_class(request.POST, instance=prestacion)
-        form2 = self.second_form_class(request.POST, instance=domicilio)
-        if form.is_valid() and form2.is_valid():
+        #form2 = self.second_form_class(request.POST, instance=domicilio)
+        if form.is_valid():# and form2.is_valid():
             form.save()
-            form2.save()
+            #form2.save()
             return HttpResponseRedirect(self.get_success_url())
         else:
             return HttpResponseRedirect(self.get_success_url())
@@ -261,8 +383,8 @@ def enviaremail(derivacion):
     send_mail(
         'Derivación SOSJujuy',
         mail_body(derivacion),
-        'sos.jujuy2018@gmail.com',
-        [derivacion.beneficiario.email],
+        'sos.jujuy.2020@gmail.com',
+        ["sos.jujuy.2020@gmail.com"], #[derivacion.beneficiario.email],
         fail_silently=False,
     )
 
@@ -276,6 +398,14 @@ def mail_body(derivacion):
              "\nSOSJujuy"
     return cadena.format(derivacion.beneficiario, derivacion.prestacion.rubro, derivacion.prestacion.prestador,
                          derivacion.fecha_hora.strftime('%d-%m-%Y a las %H:%M'), derivacion.beneficiario.id, derivacion.id)
+
+
+def mail_body_notificacion(notificacion):
+    cadena = "Hola {0}, " \
+             "\nDesde SOSJujuy queremos saber cómo te fue con tu atención de {1}" \
+             "\nSaludos," \
+             "\nSOSJujuy"
+    return cadena.format(notificacion.prestador, notificacion.asunto)    
 
 
 class DerivacionUpdateView(UpdateView):

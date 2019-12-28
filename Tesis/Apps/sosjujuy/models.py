@@ -1,4 +1,5 @@
 from django.db import models
+from django.contrib.auth.models import User
 
 
 NA, LUNES, MARTES, MIERCOLES, JUEVES, VIERNES, SABADO, DOMINGO = range(-1, 7)
@@ -72,7 +73,9 @@ class Domicilio(models.Model):
     barrio = models.CharField(max_length=60, null=True)
     calle = models.CharField(max_length=60)
     numero = models.CharField(max_length=60)
-    observaciones = models.CharField(max_length=100, null=True)
+    piso = models.CharField(max_length=60, null=True, blank=True)
+    departamento = models.CharField(max_length=60, null=True, blank=True)
+    observaciones = models.CharField(max_length=100, null=True, blank=True)
 
     def domicilio_completo(self):
         cadena = "{0}, {1} - {2} {3}"
@@ -89,7 +92,6 @@ class Antecedente(models.Model):
 
 
 class Beneficiario(Persona):
-    numero_beneficiario = models.IntegerField()
     domicilio_legal = models.ForeignKey(Domicilio, on_delete=models.SET_NULL, blank=True, null=True,
                                         related_name='domicilio_legal')
     domicilio_real = models.ForeignKey(Domicilio, on_delete=models.SET_NULL, blank=True, null=True,
@@ -126,6 +128,31 @@ class Prestacion(models.Model):
 
     def __str__(self):
         return self.prestacion_completo()
+
+
+class Notificacion(models.Model):
+    escala = models.CharField(max_length=300)
+    escalaDos = models.CharField(max_length=300)
+    asunto = models.CharField(max_length=300)
+    fecha = models.DateTimeField(auto_now_add=True)
+    prestador = models.ForeignKey(Prestador, on_delete=models.SET_NULL, blank=True, null=True)
+    beneficiario = models.ForeignKey(Beneficiario, on_delete=models.SET_NULL, blank=True, null=True)
+    user = models.ForeignKey(User, models.SET_NULL, blank=True,null=True)
+    def __str__(self):
+        cadena = "{0}, {1}"
+        return cadena.format(self.asunto, self.escala)
+
+
+class NotificacionEstado(models.Model):
+    notificacion = models.ForeignKey(Notificacion, on_delete=models.SET_NULL, blank=True, null=True)
+    estado = models.CharField(max_length=300)
+    observacion = models.CharField(max_length=500)
+    archivo = models.FileField(max_length=254, null=True, blank=True)
+    user = models.ForeignKey(User, models.SET_NULL, blank=True,null=True)
+    fecha = models.DateTimeField(auto_now_add=True)
+    def __str__(self):
+        cadena = "{0}, {1}"
+        return cadena.format(self.estado, self.observacion)
 
 
 class ActividadExtension(models.Model):
